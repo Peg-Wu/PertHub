@@ -1,4 +1,4 @@
-from transformers import PreTrainedConfig
+from transformers import PretrainedConfig
 
 """Cell Meta Information  -->  Cell Expression Profile"""
 
@@ -9,7 +9,7 @@ from transformers import PreTrainedConfig
     #   \ gaussian_nll_loss + reconstruction_penalty * mse_loss + \
     #   \ unknown_attribute_penalty * unknown_attribute_penalty_loss
 
-class BiolordConfig(PreTrainedConfig):
+class BiolordConfig(PretrainedConfig):
     model_type = "biolord"
     def __init__(
         self,

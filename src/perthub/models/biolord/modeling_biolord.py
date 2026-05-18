@@ -172,7 +172,7 @@ class BiolordModel(BiolordPreTrainedModel):
         for attribute_, len_ in self.ordered_attributes_map.items():
             self.ordered_networks[attribute_] = build_mlp(
                 in_dim=len_,
-                out_dim=self.n_latent_attribute_ordered,
+                out_dim=config.n_latent_attribute_ordered,
                 hidden_dim=self.attribute_nn_width[attribute_],
                 n_layers=self.attribute_nn_depth[attribute_],
                 bias=False,
