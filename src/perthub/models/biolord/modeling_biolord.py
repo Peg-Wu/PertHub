@@ -1,7 +1,9 @@
 import torch
+import numpy as np
 from torch import nn
-from typing import List
+from typing import List, Optional
 from dataclasses import dataclass
+from sklearn.metrics import r2_score
 from torch.distributions import Normal
 from transformers import PreTrainedModel
 from transformers.activations import ACT2FN
@@ -136,14 +138,20 @@ class BiolordPreTrainedModel(PreTrainedModel):
 
 @dataclass
 class BiolordModelOutput(ModelOutput):
-    loss: torch.FloatTensor = None
-    gaussian_nll_loss: torch.FloatTensor = None
-    mse_loss: torch.FloatTensor = None
-    reconstruction_loss: torch.FloatTensor = None
-    unknown_attribute_penalty_loss: torch.FloatTensor = None
-    means: torch.FloatTensor = None
-    variances: torch.FloatTensor = None
-    samples: torch.FloatTensor = None
+    loss: Optional[torch.FloatTensor] = None
+    gaussian_nll_loss: Optional[torch.FloatTensor] = None
+    mse_loss: Optional[torch.FloatTensor] = None
+    reconstruction_loss: Optional[torch.FloatTensor] = None
+    unknown_attribute_penalty_loss: Optional[torch.FloatTensor] = None
+
+    means: Optional[torch.FloatTensor] = None
+    variances: Optional[torch.FloatTensor] = None
+    samples: Optional[torch.FloatTensor] = None
+
+    generative_mean_accuracy: Optional[float] = None
+    generative_var_accuracy: Optional[float] = None
+    biolord_metric: Optional[float] = None
+
 
 
 class BiolordModel(BiolordPreTrainedModel):
@@ -174,7 +182,7 @@ class BiolordModel(BiolordPreTrainedModel):
                 out_dim=config.n_latent_attribute_ordered,
                 hidden_dim=self.attribute_nn_width[attribute_],
                 n_layers=self.attribute_nn_depth[attribute_],
-                bias=False,
+                bias=config.attribute_nn_bias,
                 dropout=self.attribute_dropout_rate[attribute_],
                 activation=ACT2FN[config.attribute_nn_activation],
                 add_layernorm=False,
@@ -200,7 +208,7 @@ class BiolordModel(BiolordPreTrainedModel):
             out_dim=config.n_genes * 2,  # mean and variance
             hidden_dim=config.decoder_width,
             n_layers=config.decoder_depth + 1,
-            bias=True,
+            bias=config.decoder_bias,
             dropout=config.decoder_dropout_rate,
             activation=ACT2FN[config.decoder_activation],
             add_layernorm=False,
@@ -233,10 +241,10 @@ class BiolordModel(BiolordPreTrainedModel):
 
     def forward(
         self,
-        x: torch.Tensor = None,
-        sample_indices: torch.Tensor = None,
-        cell_type: torch.Tensor = None,  # name consistent with categorical_attributes_map
-        rdkit2d_dose: torch.Tensor = None  # name consistent with ordered_attributes_map
+        x: Optional[torch.Tensor] = None,
+        sample_indices: Optional[torch.Tensor] = None,
+        cell_type: Optional[torch.Tensor] = None,  # name consistent with categorical_attributes_map
+        rdkit2d_dose: Optional[torch.Tensor] = None  # name consistent with ordered_attributes_map
     ):
         input_kwargs = locals()
 
@@ -259,10 +267,10 @@ class BiolordModel(BiolordPreTrainedModel):
 
     def _forward(
         self,
-        x: torch.Tensor = None,
-        sample_indices: torch.Tensor = None,
-        categorical_attribute_dict: dict = None,
-        ordered_attribute_dict: dict = None
+        x: Optional[torch.Tensor] = None,
+        sample_indices: Optional[torch.Tensor] = None,
+        categorical_attribute_dict: Optional[dict] = None,
+        ordered_attribute_dict: Optional[dict] = None
     ):
         # 1. encode unknown attributes
         latent_unknown_attributes: torch.Tensor = self._get_latent_unknown_attributes(sample_indices)
@@ -283,11 +291,31 @@ class BiolordModel(BiolordPreTrainedModel):
         decoder_output: dict = self._get_decoder_output(latent)
 
         # 4. compute losses
-        losses: dict[str, torch.Tensor] = self.compute_loss(
-            x=x, 
-            latent_unknown_attributes=latent_unknown_attributes, 
-            decoder_output=decoder_output
-        )
+        losses = {
+            "loss": None, 
+            "gaussian_nll_loss": None, 
+            "mse_loss": None, 
+            "reconstruction_loss": None, 
+            "unknown_attribute_penalty_loss": None
+        }
+
+        if x is not None:  # x is labels
+            losses: dict[str, torch.Tensor] = self.compute_loss(
+                x=x, 
+                latent_unknown_attributes=latent_unknown_attributes, 
+                decoder_output=decoder_output
+            )
+
+        # 5. compute r2_metric (compute while validation)
+        r2_mean, r2_var, biolord_metric = None, None, None
+        if not self.training and x is not None:
+            r2_mean, r2_var = self.r2_metric(
+                x=x,
+                categorical_attribute_dict=categorical_attribute_dict,
+                decoder_output=decoder_output
+            )
+            biolord_metric = self.biolord_metric(r2_mean, r2_var)
+
 
         return BiolordModelOutput(
             loss=losses["loss"],
@@ -297,7 +325,10 @@ class BiolordModel(BiolordPreTrainedModel):
             unknown_attribute_penalty_loss=losses["unknown_attribute_penalty_loss"],
             means=decoder_output["means"],
             variances=decoder_output["variances"],
-            samples=decoder_output["samples"]
+            samples=decoder_output["samples"],
+            generative_mean_accuracy=r2_mean,
+            generative_var_accuracy=r2_var,
+            biolord_metric=biolord_metric
         )
     
     def _get_latent_unknown_attributes(
@@ -378,4 +409,82 @@ class BiolordModel(BiolordPreTrainedModel):
             "reconstruction_loss": reconstruction_loss,
             "unknown_attribute_penalty_loss": unknown_attribute_penalty_loss
         }
+    
+    @torch.no_grad()
+    def r2_metric(
+        self,
+        x: torch.Tensor,
+        categorical_attribute_dict: dict,
+        decoder_output: dict
+    ) -> tuple[float, float]:
+        """Evaluate the :math:`R^2` metric over gene expression.
+
+        Returns
+        -------
+        The :math:`R^2` of the mean and standard deviation predictions of the gene expression.
+        """
+        batch_size = x.shape[0]
+        device = x.device
+
+        x = x.detach().cpu().numpy()  # (batch_size, n_genes)
+        indices = torch.zeros(batch_size).to(device)
+
+        # Sum the indices for categorical attributes
+        for categorical_attribute_ in self.categorical_attributes_map:
+            indices += categorical_attribute_dict[categorical_attribute_].view(-1)  # (batch_size,)
         
+        unique_indices = indices.unique()
+
+        r2_mean = 0.0
+        r2_var = 0.0
+        k = 0
+
+        pred_x_mean = (
+            torch.nan_to_num(decoder_output["means"], nan=0, neginf=0, posinf=100).detach().cpu().numpy()
+        )  # (batch_size, n_genes)
+        pred_x_var = (
+            torch.nan_to_num(decoder_output["variances"], nan=0, neginf=0, posinf=100).detach().cpu().numpy()
+        )  # (batch_size, n_genes)
+
+        for index in unique_indices:
+            index_mask = (indices == index).detach().cpu().numpy()
+            if index_mask.sum() > 2:  # skip if less than 3 samples in this group
+                x_index = x[index_mask]  # true_x: (n, n_genes)
+                means_index = pred_x_mean[index_mask]  # pred_mean: (n, n_genes)
+                variances_index = pred_x_var[index_mask]  # pred_var: (n, n_genes)
+
+                true_mean_index = np.nanmean(x_index, axis=0)  # true_x_mean: (n_genes,)
+                pred_mean_index = np.nanmean(means_index, axis=0)  # pred_mean_mean: (n_genes,)
+
+                true_var_index = np.nanvar(x_index, axis=0)  # true_x_var: (n_genes,)
+                pred_var_index = np.nanmean(variances_index, axis=0)  # pred_var_mean: (n_genes,)
+
+                r2_mean += r2_score(true_mean_index, pred_mean_index)
+                r2_var += r2_score(true_var_index, pred_var_index)
+                k += 1
+            else:
+                continue
+        if k > 0:
+            return r2_mean / k, r2_var / k
+        else:
+            return r2_mean, r2_var
+    
+    @staticmethod
+    def biolord_metric(
+        r2_mean: float,
+        r2_var: float
+    ) -> float:
+        """Evaluate biolord metric.
+
+        Parameters
+        ----------
+        r2_mean
+            r2 score of the mean of the gene expression
+        r2_var
+            r2 score of the variance of the gene expression
+
+        Returns
+        -------
+        mean of input values.
+        """
+        return np.nanmean([r2_mean, r2_var])
