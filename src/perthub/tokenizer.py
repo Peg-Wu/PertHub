@@ -1,6 +1,7 @@
 import logging
 import scanpy as sc
 from tqdm.auto import tqdm
+from typing import Optional
 from datasets import Dataset, concatenate_datasets
 
 logger = logging.getLogger(__name__)
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 def tokenize_adata_to_hf_dataset(
     adata: sc.AnnData,
     attr_map_dict: dict[str, str],
-    x_key: str = "x",
+    x_key: Optional[str] = "x",
     chunk_size: int = 20000,
 ) -> Dataset:
     """Convert AnnData to HuggingFace Dataset in chunks.
@@ -28,7 +29,8 @@ def tokenize_adata_to_hf_dataset(
         chunk_slice = slice(i, min(i + chunk_size, n_obs))
 
         chunk_dict: dict[str, list] = {}
-        chunk_dict[x_key] = X[chunk_slice]
+        if x_key is not None:
+            chunk_dict[x_key] = X[chunk_slice]
 
         for src_key, dst_key in attr_map_dict.items():
             in_obs = src_key in adata.obs
