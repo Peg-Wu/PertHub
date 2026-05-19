@@ -124,16 +124,8 @@ class BiolordPreTrainedModel(PreTrainedModel):
     config_class = BiolordConfig
     base_model_prefix = "biolord"
 
-    # def _init_weights(self, module):
-    #     std = self.config.initializer_range
-    #     if isinstance(module, nn.Linear):
-    #         module.weight.data.normal_(mean=0.0, std=std)
-    #         if module.bias is not None:
-    #             module.bias.data.zero_()
-    #     elif isinstance(module, nn.Embedding):
-    #         module.weight.data.normal_(mean=0.0, std=std)
-    #         if module.padding_idx is not None:
-    #             module.weight.data[module.padding_idx].zero_()
+    def _init_weights(self, module):
+        pass
 
 
 @dataclass
@@ -205,7 +197,7 @@ class BiolordModel(BiolordPreTrainedModel):
         # Decoder: Use Gaussian NLL Decoder
         self.decoder = build_mlp(
             in_dim=self._compute_decoder_input_size(config),
-            out_dim=config.n_genes * 2,  # mean and variance
+            out_dim=config.n_genes * 2,  # mean and logvar
             hidden_dim=config.decoder_width,
             n_layers=config.decoder_depth + 1,
             bias=config.decoder_bias,
@@ -213,7 +205,7 @@ class BiolordModel(BiolordPreTrainedModel):
             activation=ACT2FN[config.decoder_activation],
             add_layernorm=False,
             add_batchnorm=False,
-            final_linear_only=False,
+            final_linear_only=True,
         )
 
         # Loss Functions
@@ -426,13 +418,13 @@ class BiolordModel(BiolordPreTrainedModel):
         batch_size = x.shape[0]
         device = x.device
 
-        x = x.detach().cpu().numpy()  # (batch_size, n_genes)
+        x = x.detach().float().cpu().numpy()  # (batch_size, n_genes)
         indices = torch.zeros(batch_size).to(device)
 
         # Sum the indices for categorical attributes
         for categorical_attribute_ in self.categorical_attributes_map:
             indices += categorical_attribute_dict[categorical_attribute_].view(-1)  # (batch_size,)
-        
+
         unique_indices = indices.unique()
 
         r2_mean = 0.0
@@ -440,10 +432,10 @@ class BiolordModel(BiolordPreTrainedModel):
         k = 0
 
         pred_x_mean = (
-            torch.nan_to_num(decoder_output["means"], nan=0, neginf=0, posinf=100).detach().cpu().numpy()
+            torch.nan_to_num(decoder_output["means"].float(), nan=0, neginf=0, posinf=100).detach().cpu().numpy()
         )  # (batch_size, n_genes)
         pred_x_var = (
-            torch.nan_to_num(decoder_output["variances"], nan=0, neginf=0, posinf=100).detach().cpu().numpy()
+            torch.nan_to_num(decoder_output["variances"].float(), nan=0, neginf=0, posinf=100).detach().cpu().numpy()
         )  # (batch_size, n_genes)
 
         for index in unique_indices:
