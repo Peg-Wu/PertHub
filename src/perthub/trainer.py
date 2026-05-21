@@ -123,7 +123,7 @@ class BiolordTrainer(Trainer):
         accumulator_train = Accumulator(
             name=["loss", "gaussian_nll_loss", "mse_loss", "reconstruction_loss", "unknown_attribute_penalty_loss"]
         )
-        model_forward_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        # model_forward_keys = list(inspect.signature(self.model.forward).parameters.keys())
         for epoch in range(starting_epoch, self.args.num_train_epochs):
             self.model.train()
         
@@ -134,7 +134,8 @@ class BiolordTrainer(Trainer):
                 active_dataloader = self.train_dataloader
             for step, batch in enumerate(active_dataloader):
                 with self.accelerator.accumulate(self.model):
-                    filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items() if k in model_forward_keys}
+                    # filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items() if k in model_forward_keys}
+                    filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items()}
                     outputs = self.model(**filtered_batch)
                     loss = outputs.loss
                     gaussian_nll_loss = outputs.gaussian_nll_loss
@@ -236,10 +237,11 @@ class BiolordTrainer(Trainer):
         losses, gaussian_nll_losses, mse_losses, reconstruction_losses, unknown_attribute_penalty_losses = [], [], [], [], []
         generative_mean_accuracies, generative_var_accuracies, biolord_metrics = [], [], []
 
-        model_forward_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        # model_forward_keys = list(inspect.signature(self.model.forward).parameters.keys())
         for step, batch in enumerate(self.eval_dataloader):
             with torch.no_grad():
-                filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items() if k in model_forward_keys}
+                # filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items() if k in model_forward_keys}
+                filtered_batch = {k: v.to(self.accelerator.device) for k, v in batch.items()}
                 outputs = self.model(**filtered_batch)
             
             actual_batch_size = next(iter(filtered_batch.values())).size(0)

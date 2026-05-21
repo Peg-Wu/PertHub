@@ -15,6 +15,7 @@ class BiolordConfig(PretrainedConfig):
         self,
         # NOTE: Unknown attributes related parameters
         ## total number of samples (train + val + test).
+        ## Actually, n_samples just needs to count the total cells from the training and validation sets.
         ## sample_idx -> nn.Embedding -> unknown_attribute_embedding.
         n_samples: int = 354640,  
         ## latent size (final hidden_size).

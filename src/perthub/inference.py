@@ -45,10 +45,11 @@ def biolord_inference(
 
     model = model.to(device)
     model.eval()
-    model_forward_keys = list(inspect.signature(model.forward).parameters.keys())
+    # model_forward_keys = list(inspect.signature(model.forward).parameters.keys())
     predictions = []
     for batch in tqdm(test_dl, desc="inference"):
-        filtered_batch = {k: v.to(device) for k, v in batch.items() if k in model_forward_keys}
+        # filtered_batch = {k: v.to(device) for k, v in batch.items() if k in model_forward_keys}
+        filtered_batch = {k: v.to(device) for k, v in batch.items()}
         outputs = model(**filtered_batch)
         predictions.append(outputs.means.detach().cpu().numpy())
 

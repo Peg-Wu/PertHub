@@ -235,20 +235,19 @@ class BiolordModel(BiolordPreTrainedModel):
         self,
         x: Optional[torch.Tensor] = None,
         sample_indices: Optional[torch.Tensor] = None,
-        cell_type: Optional[torch.Tensor] = None,  # name consistent with categorical_attributes_map
-        rdkit2d_dose: Optional[torch.Tensor] = None  # name consistent with ordered_attributes_map
+        # cell_type: Optional[torch.Tensor] = None,  # name consistent with categorical_attributes_map
+        # rdkit2d_dose: Optional[torch.Tensor] = None  # name consistent with ordered_attributes_map
+        **categorical_and_ordered_kwargs  # name consistent with categorical_attributes_map and ordered_attributes_map
     ):
-        input_kwargs = locals()
-
         # {"cell_type": torch.tensor([...])}
         categorical_attribute_dict = {}
         for attribute_ in self.categorical_attributes_map:
-            categorical_attribute_dict[attribute_] = input_kwargs[attribute_].view(-1)
+            categorical_attribute_dict[attribute_] = categorical_and_ordered_kwargs[attribute_].view(-1)
 
         # {"rdkit2d_dose": torch.tensor([...])}
         ordered_attribute_dict = {}
         for attribute_ in self.ordered_attributes_map:
-            ordered_attribute_dict[attribute_] = input_kwargs[attribute_]
+            ordered_attribute_dict[attribute_] = categorical_and_ordered_kwargs[attribute_]
         
         return self._forward(
             x=x,
