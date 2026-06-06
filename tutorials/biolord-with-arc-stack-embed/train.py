@@ -63,7 +63,7 @@ def main():
     for key, embedding in model.categorical_embeddings.items():
         embedding.weight.data = torch.from_numpy(celltype_embed)
         # TODO: test if we should freeze the embeddings.
-        embedding.weight.requires_grad = False  # freeze the pre-computed embeddings
+        # embedding.weight.requires_grad = False  # freeze the pre-computed embeddings
 
     # train
     trainer = BiolordTrainer(
