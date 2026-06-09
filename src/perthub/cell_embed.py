@@ -4,12 +4,8 @@ import os
 import torch
 import logging
 import numpy as np
-import scanpy as sc
-import anndata as ad
-from tqdm.auto import tqdm
-from typing import Any, Union
-from scipy.sparse import issparse, csr_matrix
-from wppkg import hf_download, guess_is_lognorm, get_sorted_indices_in_array_2d_by_row
+from typing import Any
+from wppkg.dl import hf_download
 
 logger = logging.getLogger(__name__)
 
@@ -141,60 +137,3 @@ class ArcStackEmbeddingExtractor:
     def __call__(self, *args: Any, **kwargs: Any) -> np.ndarray:
         """Alias for :meth:`extract`."""
         return self.extract(*args, **kwargs)
-
-
-def reverse_adata_to_raw_counts(
-    adata: Union[str, ad.AnnData],
-    int_tol: float = 1e-3,
-    return_scaling_factors: bool = False
-) -> Union[ad.AnnData, tuple[ad.AnnData, list[float]]]:
-    if isinstance(adata, str):
-        logger.info(f"Reading adata from {adata} ...")
-        adata = sc.read_h5ad(adata)
-    else:
-        adata = adata.copy()
-
-    if not guess_is_lognorm(adata):
-        raise ValueError("Input adata is likely in raw (non-log1p) scale.")
-    
-    X = adata.X.toarray() if issparse(adata.X) else adata.X
-    X = np.expm1(X)  # log1p reverse
-    sorted_indices = get_sorted_indices_in_array_2d_by_row(
-        arr=X,
-        ignore_zero_values=True,
-        descending=False,
-        stable=None,
-        n_jobs=1,
-        enable_tqdm=False
-    )
-    logger.info("Start reversing back to raw counts.")
-    res, scaling_factors = [], []
-    for cell_idx in tqdm(range(len(adata))):
-        if len(sorted_indices[cell_idx]) == 0:  # all zero values in a cell
-            res.append(np.zeros(X.shape[1], dtype=np.float32))
-            scaling_factors.append(0.0)
-            continue
-        reverse_success = False
-        min_val = X[cell_idx, sorted_indices[cell_idx][0]]
-        for assume_min_value in range(1, 101):
-            coef = min_val / assume_min_value
-            reversed_x = X[cell_idx] / coef
-            round_reversed_X = np.round(reversed_x)
-            is_near_integer = np.isclose(reversed_x, round_reversed_X, atol=int_tol)
-            if np.all(is_near_integer):
-                res.append(round_reversed_X)
-                scaling_factors.append(coef)
-                reverse_success = True
-                break
-        if not reverse_success:
-            raise ValueError(
-                f"Failed to reverse raw counts for cell {cell_idx}."
-            )
-    logger.info("Successfully reversed back to raw counts.")
-    reversed_raw_counts_X = np.vstack(res).astype(np.float32)
-    adata.X = csr_matrix(reversed_raw_counts_X)
-
-    if return_scaling_factors:
-        return adata, scaling_factors
-    else:
-        return adata
