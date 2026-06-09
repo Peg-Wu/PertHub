@@ -17,7 +17,7 @@ keywords = ["perthub"]
 requires-python = ">=3.11"
 dependencies = [
     # "deepspeed",  # (Optional): Installation details in README.md
-    "descopex>=0.0.5",
+    "descopex>=0.0.6",
     "chemprop"
 ]
 classifiers = [
